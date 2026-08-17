@@ -55,6 +55,9 @@ npm install && npm run dev
 - `GET /api/demand`, `/api/backlog` - No filters
 - `GET /api/spending/*` - Summary, monthly, categories, transactions
 
+## Code Style
+- Always document non-obvious logic changes with comments: when a change's purpose or mechanism is not clear from the code itself, add a short comment explaining why. Obvious changes need no extra comments — keep comment density consistent with the surrounding code.
+
 ## Common Issues
 1. Use unique keys in v-for (not `index`) - use `sku`, `month`, etc.
 2. Validate dates before `.getMonth()` calls
