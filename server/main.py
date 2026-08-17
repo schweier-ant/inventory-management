@@ -1,10 +1,19 @@
-from fastapi import FastAPI, HTTPException
+from datetime import datetime, timedelta
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-from pydantic import BaseModel
-from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders
+from pydantic import BaseModel, Field
+from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders, restock_orders
 
 app = FastAPI(title="Factory Inventory Management System")
+
+# Fixed delivery lead times per destination warehouse (demo data — no supplier system exists)
+WAREHOUSE_LEAD_TIMES = {"San Francisco": 5, "London": 10, "Tokyo": 12}
+DEFAULT_LEAD_TIME_DAYS = 7
+
+# Restock urgency: rising demand is restocked before stable, stable before falling
+TREND_PRIORITY = {"increasing": 0, "stable": 1, "decreasing": 2}
 
 # Quarter mapping for date filtering
 QUARTER_MAP = {
@@ -120,6 +129,36 @@ class CreatePurchaseOrderRequest(BaseModel):
     expected_delivery_date: str
     notes: Optional[str] = None
 
+class RestockRecommendationItem(BaseModel):
+    sku: str
+    name: str
+    warehouse: str
+    category: str
+    trend: str
+    current_demand: int
+    forecasted_demand: int
+    demand_gap: int
+    unit_cost: float
+    recommended_quantity: int
+    line_cost: float
+    lead_time_days: int
+
+class RestockRecommendationsResponse(BaseModel):
+    budget: float
+    total_cost: float
+    remaining_budget: float
+    items: List[RestockRecommendationItem]
+
+class RestockOrderItemRequest(BaseModel):
+    sku: str
+    quantity: int = Field(gt=0)
+
+class CreateRestockOrderRequest(BaseModel):
+    items: List[RestockOrderItemRequest] = Field(min_length=1)
+
+class RestockOrder(Order):
+    lead_time_days: int
+
 # API endpoints
 @app.get("/")
 def root():
@@ -226,6 +265,134 @@ def get_category_spending():
 def get_recent_transactions():
     """Get recent transactions"""
     return recent_transactions
+
+def compute_restock_recommendations(budget: float) -> dict:
+    """Urgency-first greedy restock plan: join demand forecasts to inventory,
+    then spend the budget on the most urgent demand gaps first."""
+    inventory_by_sku = {item["sku"]: item for item in inventory_items}
+
+    candidates = []
+    for forecast in demand_forecasts:
+        inv = inventory_by_sku.get(forecast["item_sku"])
+        if not inv:
+            # Defensive: forecast rows without a matching inventory item cannot be priced
+            continue
+        gap = forecast["forecasted_demand"] - forecast["current_demand"]
+        if gap <= 0:
+            continue
+        candidates.append((forecast, inv, gap))
+
+    # Urgency sort: increasing trend before stable before decreasing, then largest gap first
+    candidates.sort(key=lambda c: (TREND_PRIORITY.get(c[0]["trend"], 3), -c[2]))
+
+    remaining = budget
+    items = []
+    for forecast, inv, gap in candidates:
+        unit_cost = inv["unit_cost"]
+        # Partial fills allowed: buy as much of the gap as the remaining budget covers.
+        # The epsilon compensates float error when remaining is an exact multiple of
+        # the unit cost (e.g. 1196.37 // 18.99 == 62.0 although 63 units fit exactly)
+        affordable = int((remaining + 1e-9) // unit_cost)
+        quantity = min(gap, affordable)
+        if quantity <= 0:
+            continue
+        line_cost = round(quantity * unit_cost, 2)
+        remaining = round(remaining - line_cost, 2)
+        items.append({
+            "sku": inv["sku"],
+            "name": inv["name"],
+            "warehouse": inv["warehouse"],
+            "category": inv["category"],
+            "trend": forecast["trend"],
+            "current_demand": forecast["current_demand"],
+            "forecasted_demand": forecast["forecasted_demand"],
+            "demand_gap": gap,
+            "unit_cost": unit_cost,
+            "recommended_quantity": quantity,
+            "line_cost": line_cost,
+            "lead_time_days": WAREHOUSE_LEAD_TIMES.get(inv["warehouse"], DEFAULT_LEAD_TIME_DAYS),
+        })
+
+    total_cost = round(sum(item["line_cost"] for item in items), 2)
+    return {
+        "budget": budget,
+        "total_cost": total_cost,
+        "remaining_budget": round(budget - total_cost, 2),
+        "items": items,
+    }
+
+@app.get("/api/restocking/recommendations", response_model=RestockRecommendationsResponse)
+def get_restocking_recommendations(budget: float = Query(..., ge=0)):
+    """Get a budget-constrained restock plan derived from demand forecasts"""
+    return compute_restock_recommendations(budget)
+
+@app.get("/api/restocking/orders", response_model=List[RestockOrder])
+def get_restocking_orders():
+    """Get restocking orders submitted in this server session"""
+    return restock_orders
+
+@app.post("/api/restocking/orders", response_model=List[RestockOrder], status_code=201)
+def create_restocking_order(request: CreateRestockOrderRequest):
+    """Submit a restocking order; creates one order per destination warehouse"""
+    inventory_by_sku = {item["sku"]: item for item in inventory_items}
+
+    for item in request.items:
+        if item.sku not in inventory_by_sku:
+            raise HTTPException(status_code=400, detail=f"Unknown SKU: {item.sku}")
+
+    # Merge duplicate SKUs so each order line is unique per SKU (the client
+    # keys rendered rows by sku, and one line per item reads better)
+    quantity_by_sku = {}
+    for item in request.items:
+        quantity_by_sku[item.sku] = quantity_by_sku.get(item.sku, 0) + item.quantity
+
+    # One order per warehouse: warehouses have different lead times and the
+    # Order model carries a single warehouse field
+    by_warehouse = {}
+    for sku, quantity in quantity_by_sku.items():
+        inv = inventory_by_sku[sku]
+        by_warehouse.setdefault(inv["warehouse"], []).append((quantity, inv))
+
+    now = datetime.now()
+    created = []
+    for warehouse, entries in by_warehouse.items():
+        lead = WAREHOUSE_LEAD_TIMES.get(warehouse, DEFAULT_LEAD_TIME_DAYS)
+        order_items = [
+            {
+                "sku": inv["sku"],
+                "name": inv["name"],
+                "quantity": quantity,
+                "unit_price": inv["unit_cost"],
+            }
+            for quantity, inv in entries
+        ]
+        total_value = round(sum(i["quantity"] * i["unit_price"] for i in order_items), 2)
+        seq = len(restock_orders) + 1
+        record = {
+            # RST prefix keeps ids/order numbers distinct from the numeric ORD records
+            "id": f"RST-{seq}",
+            "order_number": f"RST-{now.year}-{seq:04d}",
+            "customer": "Internal Restocking",
+            "items": order_items,
+            "status": "Submitted",
+            "order_date": now.isoformat(timespec="seconds"),
+            "expected_delivery": (now + timedelta(days=lead)).isoformat(timespec="seconds"),
+            "total_value": total_value,
+            "actual_delivery": None,
+            "warehouse": warehouse,
+            # No "category" key on purpose: orders can mix categories, and
+            # apply_filters() calls .get('category', '').lower(), which would
+            # crash on an explicit None value
+            "lead_time_days": lead,
+        }
+        # Restock orders stay OUT of the shared `orders` list on purpose:
+        # internal spend must not count as customer revenue in the dashboard,
+        # reports, and Spending aggregates, and the Orders page renders them
+        # in its own Submitted Orders section (fed by /api/restocking/orders)
+        restock_orders.append(record)
+        created.append(record)
+
+    return created
 
 @app.get("/api/reports/quarterly")
 def get_quarterly_reports():
