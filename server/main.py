@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders, restock_orders
+from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders, restock_orders, tasks
 
 app = FastAPI(title="Factory Inventory Management System")
 
@@ -124,10 +124,22 @@ class PurchaseOrder(BaseModel):
 class CreatePurchaseOrderRequest(BaseModel):
     backlog_item_id: str
     supplier_name: str
-    quantity: int
-    unit_cost: float
+    quantity: int = Field(gt=0)
+    unit_cost: float = Field(gt=0)
     expected_delivery_date: str
     notes: Optional[str] = None
+
+class Task(BaseModel):
+    id: int
+    title: str
+    priority: str
+    dueDate: str
+    status: str
+
+class CreateTaskRequest(BaseModel):
+    title: str = Field(min_length=1)
+    priority: str = Field(pattern="^(high|medium|low)$")
+    dueDate: str
 
 class RestockRecommendationItem(BaseModel):
     sku: str
@@ -218,6 +230,37 @@ def get_backlog():
         result.append(item_dict)
     return result
 
+@app.get("/api/purchase-orders/{backlog_item_id}", response_model=PurchaseOrder)
+def get_purchase_order(backlog_item_id: str):
+    """Get the purchase order created for a backlog item"""
+    for po in purchase_orders:
+        if po["backlog_item_id"] == backlog_item_id:
+            return po
+    raise HTTPException(status_code=404, detail=f"No purchase order found for backlog item {backlog_item_id}")
+
+@app.post("/api/purchase-orders", response_model=PurchaseOrder, status_code=201)
+def create_purchase_order(request: CreatePurchaseOrderRequest):
+    """Create a purchase order for a backlog item"""
+    if not any(item["id"] == request.backlog_item_id for item in backlog_items):
+        raise HTTPException(status_code=404, detail=f"Backlog item {request.backlog_item_id} not found")
+
+    if any(po["backlog_item_id"] == request.backlog_item_id for po in purchase_orders):
+        raise HTTPException(status_code=400, detail=f"A purchase order already exists for backlog item {request.backlog_item_id}")
+
+    record = {
+        "id": f"PO-2025-{len(purchase_orders) + 1:04d}",
+        "backlog_item_id": request.backlog_item_id,
+        "supplier_name": request.supplier_name,
+        "quantity": request.quantity,
+        "unit_cost": request.unit_cost,
+        "expected_delivery_date": request.expected_delivery_date,
+        "status": "Pending",
+        "created_date": datetime.now().strftime("%Y-%m-%d"),
+        "notes": request.notes,
+    }
+    purchase_orders.append(record)
+    return record
+
 @app.get("/api/dashboard/summary")
 def get_dashboard_summary(
     warehouse: Optional[str] = None,
@@ -265,6 +308,43 @@ def get_category_spending():
 def get_recent_transactions():
     """Get recent transactions"""
     return recent_transactions
+
+@app.get("/api/tasks", response_model=List[Task])
+def get_tasks():
+    """Get user tasks"""
+    return tasks
+
+@app.post("/api/tasks", response_model=Task, status_code=201)
+def create_task(request: CreateTaskRequest):
+    """Create a new task"""
+    # max()-based ids stay unique after deletions, unlike len()+1
+    next_id = max((task["id"] for task in tasks), default=100) + 1
+    record = {
+        "id": next_id,
+        "title": request.title,
+        "priority": request.priority,
+        "dueDate": request.dueDate,
+        "status": "pending",
+    }
+    tasks.append(record)
+    return record
+
+@app.delete("/api/tasks/{task_id}", response_model=Task)
+def delete_task(task_id: int):
+    """Delete a task"""
+    for i, task in enumerate(tasks):
+        if task["id"] == task_id:
+            return tasks.pop(i)
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+@app.patch("/api/tasks/{task_id}", response_model=Task)
+def toggle_task(task_id: int):
+    """Toggle a task between pending and completed"""
+    for task in tasks:
+        if task["id"] == task_id:
+            task["status"] = "completed" if task["status"] == "pending" else "pending"
+            return task
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 def compute_restock_recommendations(budget: float) -> dict:
     """Urgency-first greedy restock plan: join demand forecasts to inventory,

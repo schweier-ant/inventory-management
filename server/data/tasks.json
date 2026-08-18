@@ -1,0 +1,16 @@
+[
+  {
+    "id": 101,
+    "title": "Review low stock alerts for Sensors",
+    "priority": "high",
+    "dueDate": "2025-10-09",
+    "status": "pending"
+  },
+  {
+    "id": 102,
+    "title": "Schedule cycle count for Warehouse B",
+    "priority": "low",
+    "dueDate": "2025-10-15",
+    "status": "pending"
+  }
+]

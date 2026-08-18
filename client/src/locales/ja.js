@@ -308,6 +308,34 @@ export default {
     noTasks: 'タスクがありません。上記からタスクを追加してください！'
   },
 
+  // Purchase Order Modal
+  purchaseOrder: {
+    createTitle: '発注書を作成',
+    viewTitle: '発注書',
+    orderId: '注文ID',
+    sku: 'SKU',
+    itemName: '品目名',
+    shortage: '不足数',
+    supplierName: 'サプライヤー名',
+    supplierNamePlaceholder: 'サプライヤー名を入力...',
+    quantity: '数量',
+    unitCost: '単価',
+    totalCost: '合計金額',
+    expectedDeliveryDate: '納品予定日',
+    notes: '備考',
+    notesPlaceholder: '備考を入力（任意）...',
+    submit: '発注書を作成',
+    submitting: '作成中...',
+    cancel: 'キャンセル',
+    close: '閉じる',
+    poId: '発注番号',
+    status: 'ステータス',
+    createdDate: '作成日',
+    loadingPO: '発注書を読み込み中...',
+    notFound: 'この項目の発注書が見つかりません。',
+    genericError: 'エラーが発生しました。もう一度お試しください。'
+  },
+
   // Restocking
   restocking: {
     title: '在庫補充',
