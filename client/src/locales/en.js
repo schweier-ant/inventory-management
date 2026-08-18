@@ -308,6 +308,34 @@ export default {
     noTasks: 'No tasks yet. Add your first task above!'
   },
 
+  // Purchase Order Modal
+  purchaseOrder: {
+    createTitle: 'Create Purchase Order',
+    viewTitle: 'Purchase Order',
+    orderId: 'Order ID',
+    sku: 'SKU',
+    itemName: 'Item Name',
+    shortage: 'Shortage',
+    supplierName: 'Supplier Name',
+    supplierNamePlaceholder: 'Enter supplier name...',
+    quantity: 'Quantity',
+    unitCost: 'Unit Cost',
+    totalCost: 'Total Cost',
+    expectedDeliveryDate: 'Expected Delivery Date',
+    notes: 'Notes',
+    notesPlaceholder: 'Optional notes...',
+    submit: 'Create Purchase Order',
+    submitting: 'Creating...',
+    cancel: 'Cancel',
+    close: 'Close',
+    poId: 'PO Number',
+    status: 'Status',
+    createdDate: 'Created Date',
+    loadingPO: 'Loading purchase order...',
+    notFound: 'No purchase order found for this item.',
+    genericError: 'Something went wrong. Please try again.'
+  },
+
   // Restocking
   restocking: {
     title: 'Restocking',

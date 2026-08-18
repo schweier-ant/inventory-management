@@ -35,6 +35,10 @@ recent_transactions = load_json_file('transactions.json')
 # Load purchase orders
 purchase_orders = load_json_file('purchase_orders.json')
 
+# Load user tasks (ids start at 101: the client merges these with its own
+# hardcoded mock tasks with ids 1-3 and routes edits by id, so they must not clash)
+tasks = load_json_file('tasks.json')
+
 # Restocking orders created via POST /api/restocking/orders.
 # Intentionally in-memory only (no JSON file): they are meant to disappear on restart.
 restock_orders = []
